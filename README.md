@@ -1,34 +1,57 @@
 # OpenV Identity
 
-Community-owned identity and server discovery for OpenV.
+Standalone, community-hosted Go identity and server directory prototype for OpenV.
 
-**Status:** Initial development scaffold (October 14, 2026). No production security audit or game integration has been completed.
+**Development status (October 14, 2026):** runnable MVP source committed; automated CI validation is being established. **Not production-ready and not yet integrated with the OpenV multiplayer client/server.**
 
-OpenV Identity will be a standalone, self-hosted Go binary. A community chooses its own identity URL. Its players authenticate directly with that community; the community controls its account records, keys and registered server list. No OpenV-wide hosted identity service is required.
+## Run locally
 
-## Intended responsibilities
+Requires Go 1.22+.
 
-- Persistent local accounts and sessions, with secure password storage and recovery flows
-- Authentication and secure, short-lived connection-ticket issuance
-- Server registration and community-owned server directory
-- Verification keys, key rotation, revocation and anti-replay protections
-- Stable opaque player IDs and explicit migration/alias mappings
-- Administrative authorization and audit logging
-- Offline-friendly operation: established in-game sessions remain alive when identity service is unavailable
+```sh
+export OPENV_BOOTSTRAP_SECRET="$(openssl rand -hex 32)"
+go run . -listen 127.0.0.1:8088 -data ./data/identity.json
+```
 
-## Repository boundaries
+Keep the bootstrap secret securely and avoid exposing plain HTTP publicly. Default listener is loopback. For remote access, deploy behind a correctly configured HTTPS reverse proxy.
 
-- [openv](https://github.com/bradjtrammell/openv): game client/runtime and connection handshake
-- [openv-server](https://github.com/bradjtrammell/openv-server): dedicated-server integration and packaging
-- [openv-admin](https://github.com/bradjtrammell/openv-admin): administration UI integration
-- [openv-data](https://github.com/bradjtrammell/openv-data): resource compatibility
+```sh
+go test -count=1 ./...
+go vet ./...
+go build -o openv-identity .
+```
 
-Protocol outline: [docs/PROTOCOL.md](docs/PROTOCOL.md).
+## Implemented routes
 
-## Security baseline
+| Method | Route | Purpose |
+|---|---|---|
+| GET | `/health` | Health |
+| GET | `/.well-known/openv-identity` | Community metadata |
+| GET | `/api/v1/keys` | Public Ed25519 key |
+| POST | `/api/v1/bootstrap` | One-time protected admin setup |
+| POST | `/api/v1/admin/accounts` | Admin creates player accounts |
+| POST | `/api/v1/auth/login` | Password login, token session |
+| POST | `/api/v1/auth/logout` | Revoke session |
+| POST | `/api/v1/servers/register` | Admin registers server credentials |
+| GET | `/api/v1/servers` | Authenticated directory |
+| POST | `/api/v1/tickets` | Issue signed, short-lived server-specific ticket |
+| POST | `/api/v1/tickets/redeem` | Authorized server redeems ticket once |
 
-No default administrator password, no unsigned tickets, no unbounded sessions, no implicit trust in client-submitted identifiers, and no automatic merging of existing accounts by display name. Never substitute account authentication for lawful game ownership or asset entitlements.
+## Important limitations
 
-## Development status
+- Passwords use PBKDF2-HMAC-SHA256 (310,000 iterations) and salted hashes, **not yet Argon2id**.
+- Rate limiting is in memory; it does not persist across restart or apply globally across many proxy nodes.
+- Persistent storage is a single JSON file containing signing material; use restrictive filesystem permissions and secure backups. This is not a transactional database.
+- Signing key rotation, server secret rotation, account recovery, per-account security events, refresh tokens, and advanced roles are not implemented.
+- Tickets use an OpenV-specific Ed25519 JSON format, **not** FiveM's native `cfxTicket2`. There is no real game-client/server integration yet.
+- The `tickets/redeem` API relies on the identity server; a future authorized game-server adapter will need to define its behavior during an identity outage.
+- Docker Compose binds the service to host loopback only. Do not publicly expose it without HTTPS, authentication protections, and a security review.
 
-Design contracts are being recorded first. Do not represent the service as production-ready until persistent storage, threat-model review, automated tests, authorized client/server interoperability, and recovery procedures have been verified.
+## Related repositories
+
+- [openv](https://github.com/bradjtrammell/openv) — main game client and core source
+- [openv-server](https://github.com/bradjtrammell/openv-server) — dedicated server integration and releases
+- [openv-admin](https://github.com/bradjtrammell/openv-admin) — administration
+- [openv-data](https://github.com/bradjtrammell/openv-data) — default resources and compatibility
+
+See [protocol draft](docs/PROTOCOL.md). Existing game ownership, entitlement, licensing and source redistribution requirements remain applicable.
