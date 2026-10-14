@@ -1,0 +1,12 @@
+services:
+  identity:
+    build: .
+    restart: unless-stopped
+    environment:
+      OPENV_BOOTSTRAP_SECRET: ${OPENV_BOOTSTRAP_SECRET:?Set a secret of at least 24 characters}
+    ports:
+      - "127.0.0.1:8088:8088"
+    volumes:
+      - identity-data:/data
+volumes:
+  identity-data:
