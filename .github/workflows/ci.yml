@@ -1,0 +1,23 @@
+name: Go CI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Format check
+        run: test -z "$(gofmt -l main.go main_test.go)"
+      - name: Unit tests
+        run: go test -count=1 ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Compile Linux binary
+        run: CGO_ENABLED=0 go build -o openv-identity .
