@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/bradjtrammell/openv/master/docs/branding/openv-transparent.png" alt="OpenV logo" width="720">
+</p>
+
 # OpenV Identity
 
 Standalone, community-hosted Go identity and server directory prototype for OpenV.
