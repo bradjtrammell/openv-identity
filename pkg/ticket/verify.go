@@ -6,7 +6,6 @@ package ticket
 import (
  "crypto/ed25519"
  "encoding/base64"
- "encoding/json"
  "errors"
  "strings"
  "time"
@@ -35,7 +34,7 @@ func Verify(encoded, audience string, key ed25519.PublicKey, now time.Time) (Cla
  sig,e:=base64.RawURLEncoding.DecodeString(parts[2])
  if e!=nil||len(sig)!=ed25519.SignatureSize||!ed25519.Verify(key,[]byte(parts[1]),sig){return zero,errors.New("invalid signature")}
  var c Claims
- if e=json.Unmarshal(raw,&c);e!=nil{return zero,errors.New("invalid claims")}
+ if e=decodeStrictClaims(raw,&c);e!=nil{return zero,errors.New("invalid claims")}
  unix:=now.Unix()
  if c.Version!=1||c.Issuer!="openv-community"||c.Subject==""||c.ID==""||audience==""||c.Audience!=audience||c.Issued>unix||c.Expires<=unix||c.Expires<=c.Issued||c.Expires-c.Issued>90{
   return zero,errors.New("invalid or expired claims")
