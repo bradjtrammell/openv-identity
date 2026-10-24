@@ -22,6 +22,7 @@ import (
  "strings"
  "sync"
  "time"
+ "github.com/bradjtrammell/openv-identity/pkg/ticket"
 )
 
 const maxBody = 16 << 10
@@ -36,7 +37,7 @@ type Session struct { Subject string `json:"subject"`; Expires int64 `json:"expi
 type Database struct { Accounts map[string]Account `json:"accounts"`; Servers map[string]Server `json:"servers"`; Sessions map[string]Session `json:"sessions"`; Used map[string]int64 `json:"used"`; SigningKey string `json:"signing_key"` }
 type loginAttempt struct { Count int; Until int64 }
 type Service struct { mu sync.Mutex; path string; db Database; signer ed25519.PrivateKey; now func()time.Time; loginFailures map[string]loginAttempt }
-type TokenClaims struct { Issuer string `json:"iss"`; Subject string `json:"sub"`; Audience string `json:"aud"`; ID string `json:"jti"`; Issued int64 `json:"iat"`; Expires int64 `json:"exp"`; Version int `json:"v"` }
+type TokenClaims = ticket.Claims
 
 func randomBytes(n int) []byte { b:=make([]byte,n);if _,e:=rand.Read(b);e!=nil{panic(e)};return b }
 func randomID()string{return base64.RawURLEncoding.EncodeToString(randomBytes(24))}
@@ -77,13 +78,10 @@ func(s *Service)createAccount(username,password string,admin bool)(Account,error
  if _,ok:=s.db.Accounts[username];ok{return Account{},errors.New("username already exists")}
  salt:=randomBytes(16);a:=Account{ID:randomID(),Username:username,Salt:b64(salt),Hash:b64(derive(password,salt)),Admin:admin};s.db.Accounts[username]=a;return a,nil
 }
+// verifyTicket uses the same strict signed-claims validation as offline servers.
+// Rejecting ambiguous signed JSON prevents online/offline identity disagreements.
 func(s *Service)verifyTicket(value,audience string)(TokenClaims,error){
- parts:=strings.Split(value,".");if len(parts)!=3||parts[0]!="ov1"{return TokenClaims{},errors.New("invalid ticket format")}
- raw,e:=base64.RawURLEncoding.DecodeString(parts[1]);if e!=nil||len(raw)>4096{return TokenClaims{},errors.New("invalid ticket payload")}
- sig,e:=base64.RawURLEncoding.DecodeString(parts[2]);if e!=nil||!ed25519.Verify(s.signer.Public().(ed25519.PublicKey),[]byte(parts[1]),sig){return TokenClaims{},errors.New("invalid ticket signature")}
- var c TokenClaims;if e=json.Unmarshal(raw,&c);e!=nil{return c,errors.New("invalid ticket claims")}
- now:=s.now().Unix();if c.Issued>now||c.Expires<=c.Issued||c.Version!=1||c.Issuer!="openv-community"||c.Audience!=audience||c.Subject==""||c.ID==""||c.Expires<=now||c.Expires-c.Issued>int64(ticketLifetime.Seconds()){return c,errors.New("invalid or expired ticket")}
- return c,nil
+ return ticket.Verify(value,audience,s.signer.Public().(ed25519.PublicKey),s.now())
 }
 func validAddress(v string)bool{h,p,e:=net.SplitHostPort(v);if e!=nil||h==""||p==""{return false};n,e:=strconv.Atoi(p);return e==nil&&n>=1&&n<=65535&&len(v)<=255}
 func mustDecode(v string)[]byte{b,_:=base64.RawURLEncoding.DecodeString(v);return b}
