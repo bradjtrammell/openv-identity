@@ -89,7 +89,7 @@ func withHeaders(next http.Handler)http.Handler{return http.HandlerFunc(func(w h
 func(s *Service)handler()http.Handler{
  mux:=http.NewServeMux()
  mux.HandleFunc("GET /health",func(w http.ResponseWriter,r *http.Request){write(w,200,map[string]any{"status":"ok","service":"openv-identity"})})
- mux.HandleFunc("GET /.well-known/openv-identity",func(w http.ResponseWriter,r *http.Request){write(w,200,map[string]any{"version":1,"keys":"/api/v1/keys","servers":"/api/v1/servers","login":"/api/v1/auth/login"})})
+ mux.HandleFunc("GET /.well-known/openv-identity",func(w http.ResponseWriter,r *http.Request){write(w,200,map[string]any{"version":1,"keys":"/api/v1/keys","servers":"/api/v1/servers","login":"/api/v1/auth/login","ticket_format":"ov2","accepted_ticket_formats":[]string{"ov1","ov2"},"session_liveness":"/api/v1/sessions/check"})})
  mux.HandleFunc("GET /api/v1/keys",func(w http.ResponseWriter,r *http.Request){write(w,200,map[string]any{"alg":"Ed25519","kid":"community-1","public_key":s.publicKey()})})
  mux.HandleFunc("POST /api/v1/bootstrap",func(w http.ResponseWriter,r *http.Request){
  var v struct{Username string `json:"username"`;Password string `json:"password"`;BootstrapSecret string `json:"bootstrap_secret"`};if !readJSON(w,r,&v){return};s.mu.Lock();defer s.mu.Unlock()
@@ -130,16 +130,30 @@ func(s *Service)handler()http.Handler{
  mux.HandleFunc("POST /api/v1/tickets",func(w http.ResponseWriter,r *http.Request){
  var v struct{ServerID string `json:"server_id"`};if !readJSON(w,r,&v){return};s.mu.Lock();defer s.mu.Unlock()
  a,ok:=s.bearer(r);if !ok{bad(w,401,"unauthorized");return};server,ok:=s.db.Servers[v.ServerID];if !ok||!server.Enabled{bad(w,404,"server not found");return}
- now:=s.now();claims:=TokenClaims{Issuer:"openv-community",Subject:a.ID,Audience:v.ServerID,ID:randomID(),Issued:now.Unix(),Expires:now.Add(ticketLifetime).Unix(),Version:1}
- payload,_:=json.Marshal(claims);encoded:=b64(payload);sig:=ed25519.Sign(s.signer,[]byte(encoded));write(w,200,map[string]any{"ticket":"ov1."+encoded+"."+b64(sig),"expires_in":int(ticketLifetime.Seconds())})
+ now:=s.now()
+ // The digest binds admission to this exact login, not merely the account.
+ // The raw bearer never leaves Identity.
+ auth:=strings.TrimPrefix(r.Header.Get("Authorization"),"Bearer ")
+ claims:=TokenClaims{Issuer:"openv-community",Subject:a.ID,Audience:v.ServerID,ID:randomID(),Issued:now.Unix(),Expires:now.Add(ticketLifetime).Unix(),Version:2,Session:b64(sha256sum(auth))}
+ payload,_:=json.Marshal(claims);encoded:=b64(payload);sig:=ed25519.Sign(s.signer,[]byte(encoded));write(w,200,map[string]any{"ticket":"ov2."+encoded+"."+b64(sig),"expires_in":int(ticketLifetime.Seconds())})
  })
  mux.HandleFunc("POST /api/v1/tickets/redeem",func(w http.ResponseWriter,r *http.Request){
  var v struct{Ticket string `json:"ticket"`;ServerID string `json:"server_id"`;ServerSecret string `json:"server_secret"`};if !readJSON(w,r,&v){return};s.mu.Lock();defer s.mu.Unlock()
  server,ok:=s.db.Servers[v.ServerID];if !ok||!server.Enabled||subtle.ConstantTimeCompare(sha256sum(v.ServerSecret),mustDecode(server.SecretHash))!=1{bad(w,401,"unauthorized server");return}
  claims,e:=s.verifyTicket(v.Ticket,v.ServerID);if e!=nil{bad(w,401,e.Error());return}
- for k,exp:=range s.db.Used{if exp<=s.now().Unix(){delete(s.db.Used,k)}};if _,exists:=s.db.Used[claims.ID];exists{bad(w,409,"ticket already redeemed");return}
- s.db.Used[claims.ID]=claims.Expires;if e=s.saveLocked();e!=nil{bad(w,500,"storage error");return};write(w,200,map[string]any{"subject":claims.Subject,"server_id":claims.Audience,"expires":claims.Expires})
+ for k,exp:=range s.db.Used{if exp<=s.now().Unix(){delete(s.db.Used,k)}}
+ if _,exists:=s.db.Used[claims.ID];exists{bad(w,409,"ticket already redeemed");return}
+ if claims.Version==2 {
+  login,ok:=s.db.Sessions[claims.Session]
+  if !ok||login.Subject!=claims.Subject||login.Expires<=s.now().Unix(){bad(w,401,"issuing login revoked or expired");return}
+ }
+  s.db.Used[claims.ID]=claims.Expires
+ if e=s.saveLocked();e!=nil{bad(w,500,"storage error");return}
+ response:=map[string]any{"subject":claims.Subject,"server_id":claims.Audience,"expires":claims.Expires}
+ if claims.Version==2{response["login_session"]=claims.Session}
+ write(w,200,response)
  })
+ s.registerSessionLiveness(mux)
  return withHeaders(mux)
 }
 func main(){

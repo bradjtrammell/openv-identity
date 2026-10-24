@@ -1,5 +1,33 @@
 # OpenV autonomous engineering development log
 
+## 2026-10-24T16:07:44Z — session-bound ov2 admission, server liveness and cumulative source recovery
+
+### Inspected source and recovered histories
+- GitHub defaults inspected: `openv` master `24c104f061771726a24d7eed18d2e51649037aed`; `openv-server` main `8574b4853888121d03eed1905aef5ad77d3473f7` (the `development/session-admission-gateway` branch is `a1d88ae862b583f3f46d2607e783a57731febb3f`, with only four files); `openv-identity` main `a72ea17263436c6c0a4d21067dc8860bbe88cf66`; `openv-admin` master `87e3c1a926ffa2c7da2c5f1bf5b9508988a30dc2`; `openv-data` master `28b96c69606b337521589d1505da2a4d66b04eea`. No open issues were returned in any of the five repositories.
+- Recovered the previously unlocated cumulative source from a **mounted local artifact** `OpenV-partial-engine-resource-compensation-20261020.zip` (SHA-256 `eed4fc22f3206f4e63d0c9941de99617244328e83044e930d6ed8c93ef3ef9df`). Verified the three embedded Git bundles with `git clone` and `git fsck --full`: server `9e3b5c81a6e75da5d9a28f32284b5d163287692e` (256 tracked files), Identity `d9f9c70c049595c7944b90dc89347381fe39fbc2` (32), UI overlay `543c6e559e782ba20c381ea4cd89ff0a1d3eb67d` (20). These histories are **not** the remote branches; no force-push or unreviewed replacement occurred.
+
+### Actual implementation on `engineering/session-bound-v2-admission-20261024`
+- `pkg/ticket/verify.go`: strict canonical Ed25519 ov2 verification and version-bound 32-byte login digest, preserving legacy ov1 validation; commit `2c1059728092e22ba292d7beb191c7effb47ecff`.
+- `pkg/ticket/strict_claims.go`: require exact v2 `sid` and reject version downgrades; commit `e066d209813ac9948c3d33b58d03b77e41bad8e7`.
+- `main.go`: issue ov2 signed tickets bound to the issuing login capability; reject redemption after logout/expiry, return verified `login_session`, advertise formats and liveness; commit `09e8aa0bfc2b6c373df399bc1563482bfd3db032`.
+- `session_liveness.go`: authenticated, enabled-server-only, bounded batch check of admitted sessions without exposing bearer tokens; commit `a7cdd5c39eecb551c8d15849b206512c3ccf65b1`.
+- `session_bound_v2_test.go`: logout/restart, different-login isolation, replay, expiry and liveness tests; commit `e124beee74cd4d2ff4cc41766fc5240b9bbca2b5`.
+- `pkg/ticket/session_binding_test.go`: v1/v2 strict claim and downgrade regressions; commit `c46d13aa3841421eeb3afdcf30c618555d22a08e`.
+- `.github/workflows/ci.yml`: add strict ticket stress and full Go race suite; commit `44de340e717167723e8ff939335512d9aeba46b8`.
+- `docs/SESSION_BOUND_ADMISSION.md`: document live wire contract and limitations; commit `9a6fc4963de32f33f97a6943ae10380f53e1ef30`.
+
+### Verification, without conflating source versions
+- **PASS (GitHub authoritative):** workflow `40109955244` on `9a6fc4963de3`: Unit tests, 5x ticket stress, full Go race suite, vet, Linux build. Earlier intermediate commit `09e8aa0bfc2b` CI **FAIL** because the new liveness method had not yet been added; the next complete commit `a7cdd5c39eec` CI **PASS**. All final changes are present in the passing head.
+- **PASS (recovered cumulative local source, separate source refs):** `go test -count=1 ./...` in recovered Identity; `go test -count=1 ./internal/gateway ./internal/bootstrap ./internal/bridge` in recovered Server; recovered Identity `pkg/ticket` race tests; real separate-process Identity + gateway HTTP integration including ov2 admission, world join, automatic logout revocation, new-login isolation and cleanup. These are not tests of the GitHub branch's exact source.
+- **PASS (additional recovered-source verification at 2026-10-24T16:11 UTC):** 66/66 recovered UI Python/Chromium tests; CMake Release native C++ 30/30 CTest after incremental retries (initial builds interrupted by execution timeout); 8/8 Windows AMD64 Go cross-builds (not executed); real two-player coordinated native C++ integration with chat, movement, vehicle driver/passenger ownership, 2 MiB SHA-256-sealed resource loading, tamper rejection, resource refresh and teardown. The separate-process Identity/gateway logout smoke passed. These are independently tested **recovered local source**, not this GitHub branch or GTA V itself.
+- **PASS (PR head CI):** GitHub runs `40110143764` and `40110157163` on `066cfb0d703f` completed successfully with full Go race suite, unit tests, 5x strict ticket stress, vet and Linux build.
+- **NOT_RUN:** genuine Windows MSVC/CEF launch, licensed GTA V game execution, OneSync entities in GTA V, script/resource execution inside GTA V, two licensed-PC gameplay.
+- **BLOCKERS:** Git HTTPS in the container cannot resolve `github.com`, but authenticated GitHub connector writes work. Cumulative 256-file Server and 20-file UI source still require safe branch reconciliation and publication through supported GitHub APIs; the remote server remains a skeleton. The original FiveM-derived Windows workflow still lacks verified CEF/NUI runtime installation and game launch.
+
+### Next priority
+Safely reconcile and publish the recovered cumulative Server and UI histories **without overwriting remote defaults**; then wire this live ov2 protocol into the genuine Windows client and lawful GTA V game callbacks. Exercise two licensed PCs, real OneSync player entities, resource scripts and runtime UI before claiming playable. No public release, deployment, expense, destructive infrastructure change, or entitlement bypass.
+
+
 ## 2026-10-20T13:07:37.050Z — blocked cumulative-source reconciliation and strict ticket redemption
 
 ### Five-repository audit
