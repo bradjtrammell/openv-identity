@@ -38,8 +38,8 @@ func TestOnlineVerifierParity(t *testing.T) {
   online,oe:=s.verifyTicket(signed,tc.audience)
   offline,fe:=ticket.Verify(signed,tc.audience,key,now)
   if (oe==nil)!=(fe==nil){t.Fatalf("online/offline mismatch: %v / %v",oe,fe)}
-  if (oe==nil)!=tc.accept{t.Fatalf("accepted=%v, error=%v",oe==nil,oe)}
-  if tc.accept&&(online!=offline||online.Subject!="player"){t.Fatalf("claims differ: online=%+v offline=%+v",online,offline)}
+  if (oe==nil)!=tc.accepted{t.Fatalf("accepted=%v, error=%v",oe==nil,oe)}
+  if tc.accepted&&(online!=offline||online.Subject!="player"){t.Fatalf("claims differ: online=%+v offline=%+v",online,offline)}
  })}
 }
 
