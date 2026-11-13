@@ -94,11 +94,11 @@ func(s *Service)handler()http.Handler{
  mux.HandleFunc("POST /api/v1/bootstrap",func(w http.ResponseWriter,r *http.Request){
  var v struct{Username string `json:"username"`;Password string `json:"password"`;BootstrapSecret string `json:"bootstrap_secret"`};if !readJSON(w,r,&v){return};s.mu.Lock();defer s.mu.Unlock()
  if len(s.db.Accounts)!=0{bad(w,403,"bootstrap already completed");return};expected:=os.Getenv("OPENV_BOOTSTRAP_SECRET");if len(expected)<24||subtle.ConstantTimeCompare([]byte(v.BootstrapSecret),[]byte(expected))!=1{bad(w,403,"invalid bootstrap secret");return}
- a,e:=s.createAccount(v.Username,v.Password,true);if e!=nil{bad(w,400,e.Error());return};if e=s.saveLocked();e!=nil{bad(w,500,"storage error");return};write(w,201,map[string]string{"id":a.ID,"username":a.Username})
+ a,e:=s.createAccount(v.Username,v.Password,true);if e!=nil{bad(w,400,e.Error());return};if e=s.saveLocked();e!=nil{delete(s.db.Accounts,a.Username);bad(w,500,"storage error");return};write(w,201,map[string]string{"id":a.ID,"username":a.Username})
  })
  mux.HandleFunc("POST /api/v1/admin/accounts",func(w http.ResponseWriter,r *http.Request){
  var v struct{Username string `json:"username"`;Password string `json:"password"`};if !readJSON(w,r,&v){return};s.mu.Lock();defer s.mu.Unlock();a,ok:=s.bearer(r);if !ok||!a.Admin{bad(w,403,"admin required");return}
- created,e:=s.createAccount(v.Username,v.Password,false);if e!=nil{bad(w,400,e.Error());return};if e=s.saveLocked();e!=nil{bad(w,500,"storage error");return};write(w,201,map[string]string{"id":created.ID,"username":created.Username})
+ created,e:=s.createAccount(v.Username,v.Password,false);if e!=nil{bad(w,400,e.Error());return};if e=s.saveLocked();e!=nil{delete(s.db.Accounts,created.Username);bad(w,500,"storage error");return};write(w,201,map[string]string{"id":created.ID,"username":created.Username})
  })
  mux.HandleFunc("POST /api/v1/auth/login",func(w http.ResponseWriter,r *http.Request){
  var v struct{Username string `json:"username"`;Password string `json:"password"`};if !readJSON(w,r,&v){return};s.mu.Lock();defer s.mu.Unlock()
@@ -113,14 +113,14 @@ func(s *Service)handler()http.Handler{
  })
  mux.HandleFunc("POST /api/v1/auth/logout",func(w http.ResponseWriter,r *http.Request){
  s.mu.Lock();defer s.mu.Unlock();v:=strings.TrimPrefix(r.Header.Get("Authorization"),"Bearer ");if _,ok:=s.bearer(r);!ok{bad(w,401,"unauthorized");return}
- delete(s.db.Sessions,b64(sha256sum(v)));if e:=s.saveLocked();e!=nil{bad(w,500,"storage error");return};write(w,200,map[string]bool{"ok":true})
+ sessionKey:=b64(sha256sum(v));previous:=s.db.Sessions[sessionKey];delete(s.db.Sessions,sessionKey);if e:=s.saveLocked();e!=nil{s.db.Sessions[sessionKey]=previous;bad(w,500,"storage error");return};write(w,200,map[string]bool{"ok":true})
  })
  mux.HandleFunc("POST /api/v1/servers/register",func(w http.ResponseWriter,r *http.Request){
  var v struct{Name string `json:"name"`;Address string `json:"address"`};if !readJSON(w,r,&v){return};s.mu.Lock();defer s.mu.Unlock()
  a,ok:=s.bearer(r);if !ok||!a.Admin{bad(w,403,"admin required");return}
  if len(v.Name)<2||len(v.Name)>80||len(v.Address)>255||!validAddress(v.Address){bad(w,400,"invalid server name or address");return}
  id:=randomID();secret:=randomID();s.db.Servers[id]=Server{ID:id,Name:v.Name,Address:v.Address,SecretHash:b64(sha256sum(secret)),Enabled:true}
- if e:=s.saveLocked();e!=nil{bad(w,500,"storage error");return};write(w,201,map[string]string{"id":id,"name":v.Name,"server_secret":secret})
+ if e:=s.saveLocked();e!=nil{delete(s.db.Servers,id);bad(w,500,"storage error");return};write(w,201,map[string]string{"id":id,"name":v.Name,"server_secret":secret})
  })
  mux.HandleFunc("GET /api/v1/servers",func(w http.ResponseWriter,r *http.Request){
  s.mu.Lock();defer s.mu.Unlock();if _,ok:=s.bearer(r);!ok{bad(w,401,"unauthorized");return}
