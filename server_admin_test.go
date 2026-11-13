@@ -1,0 +1,41 @@
+package main
+
+import (
+ "path/filepath"
+ "testing"
+)
+
+func TestServerCredentialLifecycle(t *testing.T) {
+ t.Setenv("OPENV_BOOTSTRAP_SECRET", "test-only-bootstrap-secret-000000000")
+ path := filepath.Join(t.TempDir(), "identity.json")
+ service, err := newService(path)
+ if err != nil { t.Fatal(err) }
+ handler := service.handler()
+ api(t, handler, "POST", "/api/v1/bootstrap", "", map[string]string{"username":"admin","password":"strong-password-one","bootstrap_secret":"test-only-bootstrap-secret-000000000"}, 201)
+ admin := api(t, handler, "POST", "/api/v1/auth/login", "", map[string]string{"username":"admin","password":"strong-password-one"}, 200)["access_token"].(string)
+ api(t, handler, "POST", "/api/v1/admin/accounts", admin, map[string]string{"username":"player","password":"strong-password-two"}, 201)
+ player := api(t, handler, "POST", "/api/v1/auth/login", "", map[string]string{"username":"player","password":"strong-password-two"}, 200)["access_token"].(string)
+ registered := api(t, handler, "POST", "/api/v1/servers/register", admin, map[string]string{"name":"Test Server","address":"127.0.0.1:30120"}, 201)
+ id, oldSecret := registered["id"].(string), registered["server_secret"].(string)
+ rotate := map[string]string{"server_id":id}
+ api(t, handler, "POST", "/api/v1/admin/servers/rotate-secret", "", rotate, 403)
+ api(t, handler, "POST", "/api/v1/admin/servers/rotate-secret", player, rotate, 403)
+ api(t, handler, "POST", "/api/v1/admin/servers/rotate-secret", admin, map[string]string{"server_id":"missing"}, 404)
+ ticket := api(t, handler, "POST", "/api/v1/tickets", player, map[string]string{"server_id":id}, 200)["ticket"].(string)
+ newSecret := api(t, handler, "POST", "/api/v1/admin/servers/rotate-secret", admin, rotate, 200)["server_secret"].(string)
+ if oldSecret == newSecret { t.Fatal("rotation reused server credential") }
+ api(t, handler, "POST", "/api/v1/tickets/redeem", "", map[string]string{"server_id":id,"server_secret":oldSecret,"ticket":ticket}, 401)
+ api(t, handler, "POST", "/api/v1/tickets/redeem", "", map[string]string{"server_id":id,"server_secret":newSecret,"ticket":ticket}, 200)
+ api(t, handler, "POST", "/api/v1/admin/servers/set-enabled", admin, map[string]any{"server_id":id}, 400)
+ api(t, handler, "POST", "/api/v1/admin/servers/set-enabled", player, map[string]any{"server_id":id,"enabled":false}, 403)
+ api(t, handler, "POST", "/api/v1/admin/servers/set-enabled", admin, map[string]any{"server_id":id,"enabled":false}, 200)
+ api(t, handler, "POST", "/api/v1/tickets", player, map[string]string{"server_id":id}, 404)
+ api(t, handler, "POST", "/api/v1/tickets/redeem", "", map[string]string{"server_id":id,"server_secret":newSecret,"ticket":ticket}, 401)
+ restarted, err := newService(path)
+ if err != nil { t.Fatal(err) }
+ api(t, restarted.handler(), "POST", "/api/v1/tickets", player, map[string]string{"server_id":id}, 404)
+ api(t, restarted.handler(), "POST", "/api/v1/admin/servers/set-enabled", admin, map[string]any{"server_id":id,"enabled":true}, 200)
+ ticket2 := api(t, restarted.handler(), "POST", "/api/v1/tickets", player, map[string]string{"server_id":id}, 200)["ticket"].(string)
+ api(t, restarted.handler(), "POST", "/api/v1/tickets/redeem", "", map[string]string{"server_id":id,"server_secret":oldSecret,"ticket":ticket2}, 401)
+ api(t, restarted.handler(), "POST", "/api/v1/tickets/redeem", "", map[string]string{"server_id":id,"server_secret":newSecret,"ticket":ticket2}, 200)
+}
