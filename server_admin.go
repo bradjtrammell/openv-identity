@@ -49,5 +49,25 @@ func (s *Service) registerServerAdministration(mux *http.ServeMux) {
   }
   write(w, http.StatusOK, map[string]any{"server_id":request.ServerID,"enabled":server.Enabled})
  })
-}
+ mux.HandleFunc("POST /api/v1/admin/servers/update-address", func(w http.ResponseWriter, r *http.Request) {
+  var request struct { ServerID string `json:"server_id"`; Address string `json:"address"` }
+  if !readJSON(w, r, &request) { return }
+  s.mu.Lock()
+  defer s.mu.Unlock()
+  account, authorized := s.bearer(r)
+  if !authorized || !account.Admin { bad(w, http.StatusForbidden, "admin required"); return }
+  if !validAddress(request.Address) { bad(w, http.StatusBadRequest, "invalid server address"); return }
+  server, exists := s.db.Servers[request.ServerID]
+  if !exists { bad(w, http.StatusNotFound, "server not found"); return }
+  previous := server
+  server.Address = request.Address
+  s.db.Servers[request.ServerID] = server
+  if err := s.saveLocked(); err != nil {
+   s.db.Servers[request.ServerID] = previous
+   bad(w, http.StatusInternalServerError, "storage error")
+   return
+  }
+  write(w, http.StatusOK, map[string]string{"server_id":request.ServerID,"address":server.Address})
+ })
 
+}
