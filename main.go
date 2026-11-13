@@ -108,7 +108,7 @@ func(s *Service)handler()http.Handler{
  a,ok:=s.db.Accounts[strings.ToLower(v.Username)];if !ok{loginFailed();bad(w,401,"invalid credentials");return}
  salt,e:=base64.RawURLEncoding.DecodeString(a.Salt);if e!=nil{bad(w,500,"account error");return};expected,_:=base64.RawURLEncoding.DecodeString(a.Hash)
  if subtle.ConstantTimeCompare(derive(v.Password,salt),expected)!=1{loginFailed();bad(w,401,"invalid credentials");return};delete(s.loginFailures,loginKey)
- token:=randomID();s.db.Sessions[b64(sha256sum(token))]=Session{Subject:a.ID,Expires:s.now().Add(sessionLifetime).Unix()};if e=s.saveLocked();e!=nil{bad(w,500,"storage error");return}
+ token:=randomID();sessionKey:=b64(sha256sum(token));s.db.Sessions[sessionKey]=Session{Subject:a.ID,Expires:s.now().Add(sessionLifetime).Unix()};if e=s.saveLocked();e!=nil{delete(s.db.Sessions,sessionKey);bad(w,500,"storage error");return}
  write(w,200,map[string]any{"access_token":token,"expires_in":int(sessionLifetime.Seconds()),"user":map[string]any{"id":a.ID,"username":a.Username,"admin":a.Admin}})
  })
  mux.HandleFunc("POST /api/v1/auth/logout",func(w http.ResponseWriter,r *http.Request){
@@ -148,7 +148,7 @@ func(s *Service)handler()http.Handler{
   if !ok||login.Subject!=claims.Subject||login.Expires<=s.now().Unix(){bad(w,401,"issuing login revoked or expired");return}
  }
   s.db.Used[claims.ID]=claims.Expires
- if e=s.saveLocked();e!=nil{bad(w,500,"storage error");return}
+ if e=s.saveLocked();e!=nil{delete(s.db.Used,claims.ID);bad(w,500,"storage error");return}
  response:=map[string]any{"subject":claims.Subject,"server_id":claims.Audience,"expires":claims.Expires}
  if claims.Version==2{response["login_session"]=claims.Session}
  write(w,200,response)
