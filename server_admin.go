@@ -2,6 +2,7 @@ package main
 
 import (
  "net/http"
+ "strings"
 )
 
 // registerServerAdministration lets a community operator revoke a compromised
@@ -68,6 +69,35 @@ func (s *Service) registerServerAdministration(mux *http.ServeMux) {
    return
   }
   write(w, http.StatusOK, map[string]string{"server_id":request.ServerID,"address":server.Address})
+ })
+
+ // Revoking all logins for an account invalidates outstanding ov2 tickets
+ // and causes connected game servers' session-liveness checks to fail.
+ mux.HandleFunc("POST /api/v1/admin/accounts/revoke-sessions", func(w http.ResponseWriter, r *http.Request) {
+  var request struct { Username string `json:"username"` }
+  if !readJSON(w, r, &request) { return }
+  s.mu.Lock()
+  defer s.mu.Unlock()
+  actor, authorized := s.bearer(r)
+  if !authorized || !actor.Admin { bad(w, http.StatusForbidden, "admin required"); return }
+  username := strings.ToLower(strings.TrimSpace(request.Username))
+  account, exists := s.db.Accounts[username]
+  if !exists { bad(w, http.StatusNotFound, "account not found"); return }
+  removed := make(map[string]Session)
+  for key, session := range s.db.Sessions {
+   if session.Subject == account.ID {
+    removed[key] = session
+    delete(s.db.Sessions, key)
+   }
+  }
+  if len(removed) != 0 {
+   if err := s.saveLocked(); err != nil {
+    for key, session := range removed { s.db.Sessions[key] = session }
+    bad(w, http.StatusInternalServerError, "storage error")
+    return
+   }
+  }
+  write(w, http.StatusOK, map[string]any{"username":username,"revoked":len(removed)})
  })
 
 }
