@@ -154,6 +154,7 @@ func(s *Service)handler()http.Handler{
  write(w,200,response)
  })
  s.registerSessionLiveness(mux)
+ s.registerPlayerCredentials(mux)
  s.registerServerAdministration(mux)
  return withHeaders(mux)
 }
