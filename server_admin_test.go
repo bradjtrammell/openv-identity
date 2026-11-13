@@ -18,6 +18,13 @@ func TestServerCredentialLifecycle(t *testing.T) {
  registered := api(t, handler, "POST", "/api/v1/servers/register", admin, map[string]string{"name":"Test Server","address":"127.0.0.1:30120"}, 201)
  id, oldSecret := registered["id"].(string), registered["server_secret"].(string)
  rotate := map[string]string{"server_id":id}
+ api(t, handler, "POST", "/api/v1/admin/servers/update-address", "", map[string]string{"server_id":id,"address":"127.0.0.1:30121"}, 403)
+ api(t, handler, "POST", "/api/v1/admin/servers/update-address", player, map[string]string{"server_id":id,"address":"127.0.0.1:30121"}, 403)
+ api(t, handler, "POST", "/api/v1/admin/servers/update-address", admin, map[string]string{"server_id":id,"address":"not-an-address"}, 400)
+ api(t, handler, "POST", "/api/v1/admin/servers/update-address", admin, map[string]string{"server_id":"missing","address":"127.0.0.1:30121"}, 404)
+ api(t, handler, "POST", "/api/v1/admin/servers/update-address", admin, map[string]string{"server_id":id,"address":"127.0.0.1:30121"}, 200)
+ listed := api(t, handler, "GET", "/api/v1/servers", player, nil, 200)["servers"].([]any)
+ if len(listed) != 1 || listed[0].(map[string]any)["address"] != "127.0.0.1:30121" { t.Fatal("updated server address not visible to clients") }
  api(t, handler, "POST", "/api/v1/admin/servers/rotate-secret", "", rotate, 403)
  api(t, handler, "POST", "/api/v1/admin/servers/rotate-secret", player, rotate, 403)
  api(t, handler, "POST", "/api/v1/admin/servers/rotate-secret", admin, map[string]string{"server_id":"missing"}, 404)
@@ -33,6 +40,9 @@ func TestServerCredentialLifecycle(t *testing.T) {
  api(t, handler, "POST", "/api/v1/tickets/redeem", "", map[string]string{"server_id":id,"server_secret":newSecret,"ticket":ticket}, 401)
  restarted, err := newService(path)
  if err != nil { t.Fatal(err) }
+ listedAfterRestart := api(t, restarted.handler(), "GET", "/api/v1/servers", player, nil, 200)["servers"].([]any)
+ if len(listedAfterRestart) != 0 { t.Fatal("disabled server appeared in listing") }
+ if restarted.db.Servers[id].Address != "127.0.0.1:30121" { t.Fatal("updated address did not survive restart") }
  api(t, restarted.handler(), "POST", "/api/v1/tickets", player, map[string]string{"server_id":id}, 404)
  api(t, restarted.handler(), "POST", "/api/v1/admin/servers/set-enabled", admin, map[string]any{"server_id":id,"enabled":true}, 200)
  ticket2 := api(t, restarted.handler(), "POST", "/api/v1/tickets", player, map[string]string{"server_id":id}, 200)["ticket"].(string)
