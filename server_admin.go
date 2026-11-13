@@ -100,4 +100,41 @@ func (s *Service) registerServerAdministration(mux *http.ServeMux) {
   write(w, http.StatusOK, map[string]any{"username":username,"revoked":len(removed)})
  })
 
+ // Password resets are atomic with session revocation: a compromised password
+ // cannot retain a valid bearer or mint new multiplayer admission tickets.
+ mux.HandleFunc("POST /api/v1/admin/accounts/reset-password", func(w http.ResponseWriter, r *http.Request) {
+  var request struct { Username string `json:"username"`; Password string `json:"password"` }
+  if !readJSON(w, r, &request) { return }
+  s.mu.Lock()
+  defer s.mu.Unlock()
+  actor, authorized := s.bearer(r)
+  if !authorized || !actor.Admin { bad(w, http.StatusForbidden, "admin required"); return }
+  username := strings.ToLower(strings.TrimSpace(request.Username))
+  account, exists := s.db.Accounts[username]
+  if !exists { bad(w, http.StatusNotFound, "account not found"); return }
+  if len(request.Password) < 12 || len(request.Password) > 512 {
+   bad(w, http.StatusBadRequest, "password must be 12-512 characters")
+   return
+  }
+  previous := account
+  salt := randomBytes(16)
+  account.Salt = b64(salt)
+  account.Hash = b64(derive(request.Password, salt))
+  s.db.Accounts[username] = account
+  removed := make(map[string]Session)
+  for key, session := range s.db.Sessions {
+   if session.Subject == account.ID {
+    removed[key] = session
+    delete(s.db.Sessions, key)
+   }
+  }
+  if err := s.saveLocked(); err != nil {
+   s.db.Accounts[username] = previous
+   for key, session := range removed { s.db.Sessions[key] = session }
+   bad(w, http.StatusInternalServerError, "storage error")
+   return
+  }
+  write(w, http.StatusOK, map[string]any{"username":username,"revoked":len(removed)})
+ })
+
 }
