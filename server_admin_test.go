@@ -49,3 +49,27 @@ func TestServerCredentialLifecycle(t *testing.T) {
  api(t, restarted.handler(), "POST", "/api/v1/tickets/redeem", "", map[string]string{"server_id":id,"server_secret":oldSecret,"ticket":ticket2}, 401)
  api(t, restarted.handler(), "POST", "/api/v1/tickets/redeem", "", map[string]string{"server_id":id,"server_secret":newSecret,"ticket":ticket2}, 200)
 }
+
+func TestFailedPersistenceDoesNotConsumeTicketOrRetainLogin(t *testing.T) {
+ t.Setenv("OPENV_BOOTSTRAP_SECRET", "test-only-bootstrap-secret-000000000")
+ path := filepath.Join(t.TempDir(), "identity.json")
+ service, err := newService(path)
+ if err != nil { t.Fatal(err) }
+ handler := service.handler()
+ api(t, handler, "POST", "/api/v1/bootstrap", "", map[string]string{"username":"admin","password":"strong-password-one","bootstrap_secret":"test-only-bootstrap-secret-000000000"}, 201)
+ admin := api(t, handler, "POST", "/api/v1/auth/login", "", map[string]string{"username":"admin","password":"strong-password-one"}, 200)["access_token"].(string)
+ registered := api(t, handler, "POST", "/api/v1/servers/register", admin, map[string]string{"name":"Test Server","address":"127.0.0.1:30120"}, 201)
+ id, secret := registered["id"].(string), registered["server_secret"].(string)
+ ticket := api(t, handler, "POST", "/api/v1/tickets", admin, map[string]string{"server_id":id}, 200)["ticket"].(string)
+ originalPath := service.path
+ // A directory cannot be replaced by the temporary JSON file on rename.
+ service.path = t.TempDir()
+ api(t, handler, "POST", "/api/v1/tickets/redeem", "", map[string]string{"server_id":id,"server_secret":secret,"ticket":ticket}, 500)
+ if len(service.db.Used) != 0 { t.Fatal("failed redemption consumed a ticket in memory") }
+ before := len(service.db.Sessions)
+ api(t, handler, "POST", "/api/v1/auth/login", "", map[string]string{"username":"admin","password":"strong-password-one"}, 500)
+ if len(service.db.Sessions) != before { t.Fatal("failed login retained a session in memory") }
+ service.path = originalPath
+ api(t, handler, "POST", "/api/v1/tickets/redeem", "", map[string]string{"server_id":id,"server_secret":secret,"ticket":ticket}, 200)
+ api(t, handler, "POST", "/api/v1/tickets/redeem", "", map[string]string{"server_id":id,"server_secret":secret,"ticket":ticket}, 409)
+}
