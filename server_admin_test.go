@@ -73,3 +73,39 @@ func TestFailedPersistenceDoesNotConsumeTicketOrRetainLogin(t *testing.T) {
  api(t, handler, "POST", "/api/v1/tickets/redeem", "", map[string]string{"server_id":id,"server_secret":secret,"ticket":ticket}, 200)
  api(t, handler, "POST", "/api/v1/tickets/redeem", "", map[string]string{"server_id":id,"server_secret":secret,"ticket":ticket}, 409)
 }
+
+
+func TestFailedPersistenceRollsBackAccountServerAndLogout(t *testing.T) {
+ t.Setenv("OPENV_BOOTSTRAP_SECRET", "test-only-bootstrap-secret-000000000")
+ path := filepath.Join(t.TempDir(), "identity.json")
+ service, err := newService(path)
+ if err != nil { t.Fatal(err) }
+ handler := service.handler()
+ service.path = t.TempDir()
+ api(t, handler, "POST", "/api/v1/bootstrap", "", map[string]string{"username":"admin","password":"strong-password-one","bootstrap_secret":"test-only-bootstrap-secret-000000000"}, 500)
+ if len(service.db.Accounts) != 0 { t.Fatal("failed bootstrap left an administrator in memory") }
+ service.path = path
+ api(t, handler, "POST", "/api/v1/bootstrap", "", map[string]string{"username":"admin","password":"strong-password-one","bootstrap_secret":"test-only-bootstrap-secret-000000000"}, 201)
+ admin := api(t, handler, "POST", "/api/v1/auth/login", "", map[string]string{"username":"admin","password":"strong-password-one"}, 200)["access_token"].(string)
+ service.path = t.TempDir()
+ api(t, handler, "POST", "/api/v1/admin/accounts", admin, map[string]string{"username":"player","password":"strong-password-two"}, 500)
+ if _, ok := service.db.Accounts["player"]; ok { t.Fatal("failed account creation left an account in memory") }
+ api(t, handler, "POST", "/api/v1/servers/register", admin, map[string]string{"name":"Test Server","address":"127.0.0.1:30120"}, 500)
+ if len(service.db.Servers) != 0 { t.Fatal("failed server registration left a server in memory") }
+ api(t, handler, "POST", "/api/v1/auth/logout", admin, nil, 500)
+ if _, ok := service.bearerForTest(admin); !ok { t.Fatal("failed logout revoked the login in memory") }
+ service.path = path
+ api(t, handler, "POST", "/api/v1/admin/accounts", admin, map[string]string{"username":"player","password":"strong-password-two"}, 201)
+ api(t, handler, "POST", "/api/v1/servers/register", admin, map[string]string{"name":"Test Server","address":"127.0.0.1:30120"}, 201)
+ api(t, handler, "POST", "/api/v1/auth/logout", admin, nil, 200)
+ if _, ok := service.bearerForTest(admin); ok { t.Fatal("successful logout did not revoke the login") }
+}
+
+func (s *Service) bearerForTest(token string) (Account, bool) {
+ s.mu.Lock()
+ defer s.mu.Unlock()
+ session, ok := s.db.Sessions[b64(sha256sum(token))]
+ if !ok || session.Expires <= s.now().Unix() { return Account{}, false }
+ for _, account := range s.db.Accounts { if account.ID == session.Subject { return account, true } }
+ return Account{}, false
+}
